@@ -823,6 +823,24 @@ export async function handleUnifiedResponse(res, responsePayload, isStream, stat
     }
 }
 
+function maskClientResponseModel(payload, displayModel) {
+    if (!displayModel || !payload || typeof payload !== 'object') {
+        return payload;
+    }
+
+    if (typeof payload.model === 'string') {
+        payload.model = displayModel;
+    }
+    if (payload.response && typeof payload.response === 'object' && typeof payload.response.model === 'string') {
+        payload.response.model = displayModel;
+    }
+    if (payload.message && typeof payload.message === 'object' && typeof payload.message.model === 'string') {
+        payload.message.model = displayModel;
+    }
+
+    return payload;
+}
+
 function getPluginHookRequestId(config) {
     return config?._monitorRequestId || null;
 }
@@ -839,6 +857,7 @@ export async function handleStreamRequest(res, service, model, requestBody, from
     const maxRetries = retryContext?.maxRetries ?? 5;
     const currentRetry = retryContext?.currentRetry ?? 0;
     const CONFIG = retryContext?.CONFIG;
+    const clientDisplayModel = retryContext?.clientDisplayModel || model;
     const isRetry = currentRetry > 0;
     
     // 使用共享的 clientDisconnected 状态（如果是重试，继承上层的状态）
@@ -903,7 +922,7 @@ export async function handleStreamRequest(res, service, model, requestBody, from
 
             // Convert the complete chunk object to the client's format (fromProvider), if necessary.
             const chunkToSend = needsConversion
-                ? convertData(nativeChunk, 'streamChunk', toProvider, fromProvider, model, streamRequestId)
+                ? convertData(nativeChunk, 'streamChunk', toProvider, fromProvider, clientDisplayModel, streamRequestId)
                 : nativeChunk;
 
             // 监控钩子：流式响应分块
@@ -928,6 +947,7 @@ export async function handleStreamRequest(res, service, model, requestBody, from
 
             // 处理 chunkToSend 可能是数组或对象的情况
             const chunksToSend = Array.isArray(chunkToSend) ? chunkToSend : [chunkToSend];
+            chunksToSend.forEach(chunk => maskClientResponseModel(chunk, clientDisplayModel));
 
             for (const chunk of chunksToSend) {
                 // 再次检查客户端连接状态
@@ -1109,6 +1129,7 @@ export async function handleStreamRequest(res, service, model, requestBody, from
                         CONFIG,
                         currentRetry: currentRetry + 1,
                         maxRetries,
+                        clientDisplayModel,
                         clientDisconnected,  // 传递断开状态
                         anyDataSent          // 传递数据发送状态
                     };
@@ -1209,6 +1230,7 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
     const maxRetries = retryContext?.maxRetries ?? 5;
     const currentRetry = retryContext?.currentRetry ?? 0;
     const CONFIG = retryContext?.CONFIG;
+    const clientDisplayModel = retryContext?.clientDisplayModel || model;
     
     try{
         // The service returns the response in its native format (toProvider).
@@ -1229,8 +1251,9 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
         let clientResponse = nativeResponse;
         if (needsConversion) {
             logger.info(`[Response Convert] Converting response from ${toProvider} to ${fromProvider}`);
-            clientResponse = convertData(nativeResponse, 'response', toProvider, fromProvider, model);
+            clientResponse = convertData(nativeResponse, 'response', toProvider, fromProvider, clientDisplayModel);
         }
+        maskClientResponseModel(clientResponse, clientDisplayModel);
 
         // 监控钩子：非流式响应
         const hookRequestId = getPluginHookRequestId(CONFIG);
@@ -1326,7 +1349,8 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
                         ...retryContext,
                         CONFIG,
                         currentRetry: currentRetry + 1,
-                        maxRetries
+                        maxRetries,
+                        clientDisplayModel
                     };
                     
                     // 递归调用，使用新的服务
@@ -1549,6 +1573,7 @@ export async function handleContentGenerationRequest(req, res, service, endpoint
     if (!model) {
         throw new Error("Could not determine the model from the request.");
     }
+    const requestedModel = model;
     
     // 2.1. 处理自定义模型映射和别名
     const customModelConfig = getCustomModelConfig(model, CONFIG.MODEL_PROVIDER);
@@ -1658,7 +1683,7 @@ export async function handleContentGenerationRequest(req, res, service, endpoint
     // - 凭证切换重试：凭证被标记不健康后切换到其他凭证
     // 当没有不同的健康凭证可用时，重试会自动停止
     const credentialSwitchMaxRetries = CONFIG.CREDENTIAL_SWITCH_MAX_RETRIES || 5;
-    const retryContext = { CONFIG, currentRetry: 0, maxRetries: credentialSwitchMaxRetries };
+    const retryContext = { CONFIG, currentRetry: 0, maxRetries: credentialSwitchMaxRetries, clientDisplayModel: requestedModel };
     
     if (isStream) {
         await handleStreamRequest(res, service, model, processedRequestBody, fromProvider, toProvider, CONFIG.PROMPT_LOG_MODE, PROMPT_LOG_FILENAME, providerPoolManager, actualUuid, actualCustomName, retryContext);

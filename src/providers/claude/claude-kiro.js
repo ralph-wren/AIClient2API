@@ -322,7 +322,11 @@ function appendPromptCacheSegments(segments, content, fallbackMarked = false) {
 function buildCacheablePromptText(requestBody = {}) {
     const segments = [];
 
+    const beforeSystemSegments = segments.length;
     appendPromptCacheSegments(segments, requestBody.system, hasCacheControlMarker(requestBody.system));
+    for (let i = beforeSystemSegments; i < segments.length; i++) {
+        segments[i].autoCacheable = true;
+    }
 
     if (Array.isArray(requestBody.tools)) {
         for (const tool of requestBody.tools) {

@@ -4,14 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="2bd9f74a-38db-4222-91c5-64f7d9c172af" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker/docker-compose.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/config-manager.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/config-manager.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/plugins/ai-monitor/index.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/plugins/ai-monitor/index.js" afterDir="false" />
+    <list default="true" id="2bd9f74a-38db-4222-91c5-64f7d9c172af" name="Changes" comment="feat(claude): 添加 Kiro 提供商缓存会计功能并优化 AI 监控插件&#10;&#10;- 添加 Kiro 提供商的缓存控制标记检测和分段构建功能&#10;- 实现 prompt 缓存会计配置和计算逻辑，支持 TTL 和最小 token 阈值&#10;- 添加缓存创建和读取的 token 统计，并集成到 Claude 响应构建中&#10;- 重构错误处理函数以支持 Kiro 特定的 HTTP 错误原因构建&#10;- 优化 AI 监控插件的日志记录，添加负载截断和摘要统计功能&#10;- 添加按最近使用时间排序的模型使用统计功能&#10;- 更新 Docker 配置文件中的端口映射和环境变量设置&#10;- 添加 Kiro 账户同步脚本的包管理命令配置">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/providers/claude/claude-kiro.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/providers/claude/claude-kiro.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/model-usage-stats.html" beforeDir="false" afterPath="$PROJECT_DIR$/static/model-usage-stats.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/common.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/common.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -28,12 +24,12 @@
     &quot;assignee&quot;: &quot;ralph-wren&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings">{
-  &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;git@github.com:justlovemaki/AIClient2API.git&quot;,
-    &quot;accountId&quot;: &quot;b018ff67-cba6-44bd-8283-568638c3fb70&quot;
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "git@github.com:ralph-wren/AIClient2API.git",
+    "accountId": "b018ff67-cba6-44bd-8283-568638c3fb70"
   }
-}</component>
+}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3,
   &quot;fromUser&quot;: false
@@ -111,8 +107,25 @@
       <workItem from="1778766397279" duration="7000" />
       <workItem from="1779630957651" duration="3194000" />
       <workItem from="1779804321515" duration="26000" />
-      <workItem from="1782028337063" duration="4881000" />
+      <workItem from="1782028337063" duration="6865000" />
     </task>
+    <task id="LOCAL-00001" summary="feat(claude): 添加 Kiro 提供商缓存会计功能并优化 AI 监控插件&#10;&#10;- 添加 Kiro 提供商的缓存控制标记检测和分段构建功能&#10;- 实现 prompt 缓存会计配置和计算逻辑，支持 TTL 和最小 token 阈值&#10;- 添加缓存创建和读取的 token 统计，并集成到 Claude 响应构建中&#10;- 重构错误处理函数以支持 Kiro 特定的 HTTP 错误原因构建&#10;- 优化 AI 监控插件的日志记录，添加负载截断和摘要统计功能&#10;- 添加按最近使用时间排序的模型使用统计功能&#10;- 更新 Docker 配置文件中的端口映射和环境变量设置&#10;- 添加 Kiro 账户同步脚本的包管理命令配置">
+      <option name="closed" value="true" />
+      <created>1782053877386</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1782053877386</updated>
+    </task>
+    <task id="LOCAL-00002" summary="feat(claude): 添加 Kiro 提供商缓存会计功能并优化 AI 监控插件&#10;&#10;- 添加 Kiro 提供商的缓存控制标记检测和分段构建功能&#10;- 实现 prompt 缓存会计配置和计算逻辑，支持 TTL 和最小 token 阈值&#10;- 添加缓存创建和读取的 token 统计，并集成到 Claude 响应构建中&#10;- 重构错误处理函数以支持 Kiro 特定的 HTTP 错误原因构建&#10;- 优化 AI 监控插件的日志记录，添加负载截断和摘要统计功能&#10;- 添加按最近使用时间排序的模型使用统计功能&#10;- 更新 Docker 配置文件中的端口映射和环境变量设置&#10;- 添加 Kiro 账户同步脚本的包管理命令配置">
+      <option name="closed" value="true" />
+      <created>1782053953207</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1782053953207</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -128,5 +141,9 @@
         </entry>
       </map>
     </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="feat(claude): 添加 Kiro 提供商缓存会计功能并优化 AI 监控插件&#10;&#10;- 添加 Kiro 提供商的缓存控制标记检测和分段构建功能&#10;- 实现 prompt 缓存会计配置和计算逻辑，支持 TTL 和最小 token 阈值&#10;- 添加缓存创建和读取的 token 统计，并集成到 Claude 响应构建中&#10;- 重构错误处理函数以支持 Kiro 特定的 HTTP 错误原因构建&#10;- 优化 AI 监控插件的日志记录，添加负载截断和摘要统计功能&#10;- 添加按最近使用时间排序的模型使用统计功能&#10;- 更新 Docker 配置文件中的端口映射和环境变量设置&#10;- 添加 Kiro 账户同步脚本的包管理命令配置" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat(claude): 添加 Kiro 提供商缓存会计功能并优化 AI 监控插件&#10;&#10;- 添加 Kiro 提供商的缓存控制标记检测和分段构建功能&#10;- 实现 prompt 缓存会计配置和计算逻辑，支持 TTL 和最小 token 阈值&#10;- 添加缓存创建和读取的 token 统计，并集成到 Claude 响应构建中&#10;- 重构错误处理函数以支持 Kiro 特定的 HTTP 错误原因构建&#10;- 优化 AI 监控插件的日志记录，添加负载截断和摘要统计功能&#10;- 添加按最近使用时间排序的模型使用统计功能&#10;- 更新 Docker 配置文件中的端口映射和环境变量设置&#10;- 添加 Kiro 账户同步脚本的包管理命令配置" />
   </component>
 </project>
