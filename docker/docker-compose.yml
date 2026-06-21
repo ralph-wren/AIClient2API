@@ -6,16 +6,18 @@ services:
     container_name: aiclient2api
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3001:3001"
       - "8085-8087:8085-8087"
       - "1455:1455"
       - "56121:56121"
       - "19876-19880:19876-19880"
     volumes:
       - ./configs:/app/configs
-      - ./plugins:/app/src/plugins-user
+      - ../src/providers/provider-models.js:/app/src/providers/provider-models.js:ro
+      - ../src/providers/claude/claude-kiro.js:/app/src/providers/claude/claude-kiro.js:ro
     environment:
-      - ARGS=
+      - ARGS=--port 3001
+      - SERVER_PORT=3001
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
       interval: 30s

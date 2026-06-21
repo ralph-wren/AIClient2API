@@ -45,6 +45,9 @@
     "test:integration": "node run-tests.js --integration",
     "test:summary": "node test-summary.js",
     "help": "node src/scripts/help.js",
-    "example:api": "node src/scripts/example-api.js"
+    "example:api": "node src/scripts/example-api.js",
+    "sync:kiro": "python scripts/sync-kiro-account.py",
+    "sync:kiro:remote": "python scripts/sync-kiro-account.py --sync-remote",
+    "sync:kiro:watch": "python scripts/sync-kiro-account.py --sync-remote --watch-count"
   }
 }

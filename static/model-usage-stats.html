@@ -899,6 +899,7 @@
         <div class="tool-row">
           <input class="search" id="searchInput" type="search" placeholder="搜索 provider 或 model">
           <select class="select" id="sortSelect">
+            <option value="lastUsedAt-desc">按最近使用倒序</option>
             <option value="totalTokens-desc">按总 Token 降序</option>
             <option value="requestCount-desc">按请求数降序</option>
             <option value="promptTokens-desc">按输入 Token 降序</option>
@@ -1109,6 +1110,11 @@
       const [field, dir] = el('sortSelect').value.split('-');
       const list = keyword ? rows.filter(r => r.provider.toLowerCase().includes(keyword) || r.model.toLowerCase().includes(keyword)) : rows.slice();
       list.sort((a, b) => {
+        if (field === 'lastUsedAt') {
+          const l = a.lastUsedAt ? new Date(a.lastUsedAt).getTime() : 0,
+            r = b.lastUsedAt ? new Date(b.lastUsedAt).getTime() : 0;
+          return dir === 'desc' ? r - l : l - r
+        }
         if (field === 'provider' || field === 'model') {
           const l = String(a[field] || ''),
             r = String(b[field] || '');

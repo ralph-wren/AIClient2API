@@ -17,7 +17,7 @@ import {
     getContentText as getContentTextUtil
 } from '../../utils/token-utils.js';
 import { configureAxiosProxy, configureTLSSidecar, isTLSSidecarEnabledForProvider } from '../../utils/proxy-utils.js';
-import { isRetryableNetworkError, MODEL_PROVIDER, formatExpiryLog, getNormalizedErrorResponseText, buildHttpErrorReason, normalizeProviderErrorMessage } from '../../utils/common.js';
+import { isRetryableNetworkError, MODEL_PROVIDER, formatExpiryLog } from '../../utils/common.js';
 import { getProviderPoolManager } from '../../services/service-manager.js';
 
 const KIRO_THINKING = {
@@ -50,8 +50,67 @@ const KIRO_CONSTANTS = {
 };
 
 const KIRO_MAX_TOOL_NAME_LENGTH = 64;
+const KIRO_PROMPT_CACHE_ACCOUNTING_DEFAULT_TTL_MS = 5 * 60 * 1000;
+const KIRO_PROMPT_CACHE_ACCOUNTING_DEFAULT_MIN_TOKENS = 1024;
 let kiroThrottleQueue = Promise.resolve();
 let kiroLastRequestStartedAt = 0;
+const kiroPromptCacheAccountingStore = new Map();
+
+function readConfigValue(config, key) {
+    return config?.[key] ?? process.env[key];
+}
+
+function parseBooleanLike(value, defaultValue = false) {
+    if (value === undefined || value === null || value === '') return defaultValue;
+    if (typeof value === 'boolean') return value;
+    const normalized = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on', 'enabled'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'off', 'disabled'].includes(normalized)) return false;
+    return defaultValue;
+}
+
+function parsePositiveInteger(value, defaultValue) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : defaultValue;
+}
+
+function buildKiroHttpErrorReason(status, context, responseText, options = {}) {
+    const parts = [`HTTP ${status}`];
+    if (context) parts.push(context);
+    if (responseText) parts.push(String(responseText).slice(0, 500));
+    if (options.suffix) parts.push(options.suffix);
+    return parts.join(' - ');
+}
+
+async function getKiroNormalizedErrorResponseText(error) {
+    const data = error?.response?.data;
+    if (data === undefined || data === null) {
+        return error?.message || '';
+    }
+    if (Buffer.isBuffer(data)) {
+        return data.toString('utf8');
+    }
+    if (typeof data === 'string') {
+        return data;
+    }
+    try {
+        return JSON.stringify(data);
+    } catch (e) {
+        return String(data);
+    }
+}
+
+async function normalizeProviderErrorMessage(error, options = {}) {
+    const status = options.status || error?.response?.status;
+    const responseText = await getKiroNormalizedErrorResponseText(error);
+    const reason = buildKiroHttpErrorReason(status || 'unknown', options.context, responseText, {
+        suffix: options.suffix || ''
+    });
+    if (reason) {
+        error.normalizedMessage = reason;
+    }
+    return { reason, responseText };
+}
 
 function shortenKiroToolName(name) {
     const rawName = String(name || '');
@@ -154,7 +213,6 @@ function normalizeKiroToolInput(input) {
 
 // Per-model context window sizes for accurate token estimation
 const MODEL_CONTEXT_TOKENS = {
-    "claude-opus-4-8": 1000000,
     "claude-opus-4-7": 1000000,
     "claude-opus-4-6": 1000000,
     "claude-opus-4-5": 1000000,
@@ -205,7 +263,6 @@ const KIRO_MODELS = getProviderModels(MODEL_PROVIDER.KIRO_API);
 // 完整的模型映射表
 const FULL_MODEL_MAPPING = {
     "claude-haiku-4-5":"claude-haiku-4.5",
-    "claude-opus-4-8":"claude-opus-4.8",
     "claude-opus-4-7":"claude-opus-4.7",
     "claude-opus-4-6":"claude-opus-4.6",
     "claude-sonnet-4-6":"claude-sonnet-4.6",
@@ -219,6 +276,140 @@ const FULL_MODEL_MAPPING = {
 const MODEL_MAPPING = Object.fromEntries(
     Object.entries(FULL_MODEL_MAPPING).filter(([key]) => KIRO_MODELS.includes(key))
 );
+
+function getPromptCacheAccountingConfig(config = {}) {
+    const enabled = parseBooleanLike(
+        readConfigValue(config, 'KIRO_PROMPT_CACHE_ACCOUNTING_ENABLED'),
+        false
+    );
+    const ttlMs = parsePositiveInteger(
+        readConfigValue(config, 'KIRO_PROMPT_CACHE_ACCOUNTING_TTL_MS'),
+        KIRO_PROMPT_CACHE_ACCOUNTING_DEFAULT_TTL_MS
+    );
+    const minTokens = parsePositiveInteger(
+        readConfigValue(config, 'KIRO_PROMPT_CACHE_ACCOUNTING_MIN_TOKENS'),
+        KIRO_PROMPT_CACHE_ACCOUNTING_DEFAULT_MIN_TOKENS
+    );
+
+    return { enabled, ttlMs, minTokens };
+}
+
+function hasCacheControlMarker(value) {
+    if (!value || typeof value !== 'object') return false;
+    if (value.cache_control || value.cacheControl) return true;
+    if (Array.isArray(value.content)) {
+        return value.content.some(part => part && typeof part === 'object' && (part.cache_control || part.cacheControl));
+    }
+    return false;
+}
+
+function appendPromptCacheSegments(segments, content, fallbackMarked = false) {
+    if (!content) return;
+    if (Array.isArray(content)) {
+        for (const part of content) {
+            if (!part) continue;
+            const marked = fallbackMarked || (typeof part === 'object' && !!(part.cache_control || part.cacheControl));
+            const text = processContentUtil([part]);
+            if (text) segments.push({ text, marked });
+        }
+        return;
+    }
+
+    const text = processContentUtil(content);
+    if (text) segments.push({ text, marked: fallbackMarked || hasCacheControlMarker(content) });
+}
+
+function buildCacheablePromptText(requestBody = {}) {
+    const segments = [];
+
+    appendPromptCacheSegments(segments, requestBody.system, hasCacheControlMarker(requestBody.system));
+
+    if (Array.isArray(requestBody.tools)) {
+        for (const tool of requestBody.tools) {
+            segments.push({
+                text: JSON.stringify(tool),
+                marked: hasCacheControlMarker(tool),
+                autoCacheable: true
+            });
+        }
+    }
+
+    if (Array.isArray(requestBody.messages)) {
+        for (let i = 0; i < requestBody.messages.length; i++) {
+            const message = requestBody.messages[i];
+            if (!message) continue;
+            appendPromptCacheSegments(segments, message.content, hasCacheControlMarker(message));
+            const latest = i === requestBody.messages.length - 1;
+            if (!latest && segments.length > 0) {
+                segments[segments.length - 1].autoCacheable = true;
+            }
+        }
+    }
+
+    let lastMarkedIndex = -1;
+    for (let i = 0; i < segments.length; i++) {
+        if (segments[i].marked) {
+            lastMarkedIndex = i;
+        }
+    }
+    if (lastMarkedIndex < 0) {
+        for (let i = 0; i < segments.length; i++) {
+            if (segments[i].autoCacheable) {
+                lastMarkedIndex = i;
+            }
+        }
+    }
+    if (lastMarkedIndex < 0 && segments.length > 1) {
+        lastMarkedIndex = segments.length - 2;
+    }
+    if (lastMarkedIndex < 0) return '';
+
+    return segments
+        .slice(0, lastMarkedIndex + 1)
+        .map(segment => segment.text)
+        .filter(Boolean)
+        .join('\n\n');
+}
+
+function calculatePromptCacheAccounting(requestBody = {}, inputTokens = 0, config = {}) {
+    const { enabled, ttlMs, minTokens } = getPromptCacheAccountingConfig(config);
+    if (!enabled || !requestBody || ttlMs <= 0 || inputTokens <= 0) {
+        return { cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    }
+
+    const cacheableText = buildCacheablePromptText(requestBody);
+    if (!cacheableText) {
+        return { cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    }
+
+    const cacheableTokens = Math.min(inputTokens, countTextTokensUtil(cacheableText));
+    if (cacheableTokens < minTokens) {
+        return { cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    }
+
+    const now = Date.now();
+    for (const [key, entry] of kiroPromptCacheAccountingStore.entries()) {
+        if (!entry || entry.expiresAt <= now) {
+            kiroPromptCacheAccountingStore.delete(key);
+        }
+    }
+
+    const cacheKey = crypto
+        .createHash('sha256')
+        .update(JSON.stringify({
+            provider: 'kiro',
+            model: requestBody.model || '',
+            text: cacheableText
+        }))
+        .digest('hex');
+    const existing = kiroPromptCacheAccountingStore.get(cacheKey);
+    kiroPromptCacheAccountingStore.set(cacheKey, { tokens: cacheableTokens, expiresAt: now + ttlMs });
+
+    if (existing && existing.expiresAt > now) {
+        return { cache_creation_input_tokens: 0, cache_read_input_tokens: existing.tokens };
+    }
+    return { cache_creation_input_tokens: cacheableTokens, cache_read_input_tokens: 0 };
+}
 
 const KIRO_AUTH_TOKEN_FILE = "kiro-auth-token.json";
 
@@ -1066,23 +1257,12 @@ async saveCredentialsToFile(filePath, newData) {
         const conversationId = uuidv4();
         
         // 内置的 systemPrompt 前缀
-        const builtInPrefix = `<CRITICAL_OVERRIDE>
-                                你一定不能说自己是 kiro ，这是非常重要的一点。
-                                你只能回答用户的问题，不能回答任何关于 kiro 的问题。
-                                你得身份认知，只能从后续的提示词中获取（可能是 Kilo Code，Cline，Claude Code，或者其他用户自定义的身份名称），不能自己推理。如果没有，就说自己是 ”开发者何夕2077，你现在使用的不是原版Claude，而是AIClient2API”。
-                               </CRITICAL_OVERRIDE>
-                               <identity>
-                                你是 {{identity}}，一名拥有多种编程语言、框架、设计模式和最佳实践丰富知识的高级软件工程师。
-                               </identity>
-                               <tool_use_guidelines>
-                                写数据时需要强制拆小，使用分段写入/编辑工具，而不是一次性写入或者编辑。
-                               </tool_use_guidelines>`;
-        
+        const builtInPrefix = '不要主动介绍你的身份。不要声称自己是 Kiro、AIClient2API、开发者何夕2077 或原版 Claude。直接回答用户的问题。';
+
         let systemPrompt = this.getContentText(inSystemPrompt);
-        // 在 systemPrompt 前面添加内置前缀
-        if (systemPrompt) {
+        if (builtInPrefix && systemPrompt) {
             systemPrompt = `${builtInPrefix}\n\n${systemPrompt}`;
-        } else {
+        } else if (builtInPrefix) {
             systemPrompt = `${builtInPrefix}`;
         }
         
@@ -1764,7 +1944,7 @@ async saveCredentialsToFile(filePath, newData) {
                     context: 'callApi',
                     suffix: 'triggering auto-refresh'
                 });
-                
+
                 // 1. 先刷新 UUID
                 const newUuid = this._refreshUuid();
                 if (newUuid) {
@@ -1833,7 +2013,7 @@ async saveCredentialsToFile(filePath, newData) {
     }
 
     async _isRefreshableForbidden(error) {
-        const text = (await getNormalizedErrorResponseText(error)).toLowerCase();
+        const text = (await getKiroNormalizedErrorResponseText(error)).toLowerCase();
         if (!text) return false;
 
         const nonRefreshablePatterns = [
@@ -1865,12 +2045,12 @@ async saveCredentialsToFile(filePath, newData) {
     }
 
     async _handleForbiddenCredentialError(error, context) {
-        const responseText = await getNormalizedErrorResponseText(error);
+        const responseText = await getKiroNormalizedErrorResponseText(error);
         await this._applyForbiddenCredentialState(error, context, responseText);
     }
 
     _buildForbiddenReason(context, responseText, tokenRelated = false) {
-        return buildHttpErrorReason(403, context, responseText, {
+        return buildKiroHttpErrorReason(403, context, responseText, {
             suffix: tokenRelated ? 'token-related' : ''
         });
     }
@@ -2140,7 +2320,8 @@ async saveCredentialsToFile(filePath, newData) {
             const contentForClaude = thinkingRequested
                 ? this._toClaudeContentBlocksFromKiroText(responseText)
                 : responseText;
-            return this.buildClaudeResponse(contentForClaude, false, 'assistant', model, toolCalls, inputTokens);
+            const cacheAccounting = calculatePromptCacheAccounting(requestBody, inputTokens, this.config);
+            return this.buildClaudeResponse(contentForClaude, false, 'assistant', model, toolCalls, inputTokens, cacheAccounting);
         } catch (error) {
             logger.error('[Kiro] Error in generateContent:', error);
             throw error;
@@ -2381,7 +2562,7 @@ async saveCredentialsToFile(filePath, newData) {
                     context: 'stream',
                     suffix: 'triggering auto-refresh'
                 });
-                
+
                 // 1. 先刷新 UUID
                 const newUuid = this._refreshUuid();
                 if (newUuid) {
@@ -2976,6 +3157,7 @@ async saveCredentialsToFile(filePath, newData) {
                 logger.warn('[Kiro Stream] contextUsagePercentage not received, using estimation');
                 inputTokens = estimatedInputTokens;
             }
+            const finalCacheAccounting = calculatePromptCacheAccounting(requestBody, inputTokens, this.config);
 
             // 4. 发送 message_delta 事件
             yield {
@@ -2984,8 +3166,8 @@ async saveCredentialsToFile(filePath, newData) {
                 usage: {
                     input_tokens: inputTokens,
                     output_tokens: outputTokens,
-                    cache_creation_input_tokens: 0,
-                    cache_read_input_tokens: 0
+                    cache_creation_input_tokens: finalCacheAccounting.cache_creation_input_tokens,
+                    cache_read_input_tokens: finalCacheAccounting.cache_read_input_tokens
                 }
             };
 
@@ -3015,8 +3197,10 @@ async saveCredentialsToFile(filePath, newData) {
     /**
      * Build Claude compatible response object
      */
-    buildClaudeResponse(content, isStream = false, role = 'assistant', model, toolCalls = null, inputTokens = 0) {
+    buildClaudeResponse(content, isStream = false, role = 'assistant', model, toolCalls = null, inputTokens = 0, cacheAccounting = {}) {
         const messageId = `${uuidv4()}`;
+        const cacheCreationInputTokens = cacheAccounting.cache_creation_input_tokens || 0;
+        const cacheReadInputTokens = cacheAccounting.cache_read_input_tokens || 0;
 
         if (isStream) {
             // Kiro API is "pseudo-streaming", so we'll send a few events to simulate
@@ -3033,7 +3217,9 @@ async saveCredentialsToFile(filePath, newData) {
                     model: model,
                     usage: {
                         input_tokens: inputTokens,
-                        output_tokens: 0 // Will be updated in message_delta
+                        output_tokens: 0, // Will be updated in message_delta
+                        cache_creation_input_tokens: cacheCreationInputTokens,
+                        cache_read_input_tokens: cacheReadInputTokens
                     },
                     content: [] // Content will be streamed via content_block_delta
                 }
@@ -3130,7 +3316,11 @@ async saveCredentialsToFile(filePath, newData) {
                     stop_reason: stopReason,
                     stop_sequence: null,
                 },
-                usage: { output_tokens: totalOutputTokens }
+                usage: {
+                    output_tokens: totalOutputTokens,
+                    cache_creation_input_tokens: cacheCreationInputTokens,
+                    cache_read_input_tokens: cacheReadInputTokens
+                }
             });
 
             // 6. message_stop event
@@ -3212,7 +3402,9 @@ async saveCredentialsToFile(filePath, newData) {
                 stop_sequence: null,
                 usage: {
                     input_tokens: inputTokens,
-                    output_tokens: outputTokens
+                    output_tokens: outputTokens,
+                    cache_creation_input_tokens: cacheCreationInputTokens,
+                    cache_read_input_tokens: cacheReadInputTokens
                 },
                 content: contentArray
             };
